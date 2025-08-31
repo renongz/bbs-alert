@@ -1,0 +1,12 @@
+.alert-table-wrapper { overflow-x:auto; }
+.alert-table { width:100%; border-collapse:collapse; margin-top:20px; font-size:14px; }
+.alert-table th, .alert-table td { border:1px solid #ddd; padding:8px; text-align:left; }
+.alert-table th { background-color:#f2f2f2; }
+.panic-row { background-color:#ffe5e5; font-weight:bold; }
+
+/* Responsive for mobile */
+@media (max-width:600px){
+  .alert-table th, .alert-table td { font-size:12px; padding:6px; }
+  .button-box { display:flex; flex-direction:column; gap:10px; }
+  .small-buttons { display:flex; flex-direction:row; gap:5px; margin-top:5px; }
+}
