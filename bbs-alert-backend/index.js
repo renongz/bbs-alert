@@ -7,8 +7,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Initialize Firebase Admin
-const serviceAccount = require(path.join(__dirname, "serviceAccountKey.json"));
+// Use the path to the secret outside Git
+const serviceAccount = require(
+  path.join("C:/Users/lenovo/Documents/BBS-backend-secret/serviceAccountKey.json")
+);
+
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
 const db = admin.firestore();
@@ -116,4 +119,6 @@ app.delete("/clear-alerts", async (_req, res) => {
   }
 });
 
-app.listen(4000, () => console.log("🚀 Backend running on http://localhost:4000"));
+app.listen(4000, () =>
+  console.log("🚀 Backend running on http://localhost:4000")
+);
