@@ -1,18 +1,23 @@
 const express = require("express");
 const cors = require("cors");
 const admin = require("firebase-admin");
-const path = require("path");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Use the path to the secret outside Git
-const serviceAccount = require(
-  path.join("C:/Users/lenovo/Documents/BBS-backend-secret/serviceAccountKey.json")
-);
+// Load Firebase service account from environment variable (Render)
+let serviceAccount;
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+} else {
+  // Fallback for local development
+  serviceAccount = require("./serviceAccountKey.json");
+}
 
-admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 const db = admin.firestore();
 const tokensCol = db.collection("fcmTokens");
@@ -50,14 +55,13 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// Send alert (panic or suspicious)
+// Send alert
 app.post("/send-alert", async (req, res) => {
   const { title, body, type } = req.body;
   if (!title || !body || !type)
     return res.status(400).json({ error: "Missing title/body/type" });
 
   try {
-    // Add alert to Firestore
     const alertDoc = {
       title,
       body,
@@ -66,7 +70,6 @@ app.post("/send-alert", async (req, res) => {
     };
     await alertsCol.add(alertDoc);
 
-    // Send push notification to all tokens
     const snap = await tokensCol.get();
     const tokens = snap.docs.map((d) => d.id);
 
@@ -119,6 +122,7 @@ app.delete("/clear-alerts", async (_req, res) => {
   }
 });
 
-app.listen(4000, () =>
-  console.log("🚀 Backend running on http://localhost:4000")
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () =>
+  console.log(`🚀 Backend running on http://localhost:${PORT}`)
 );
