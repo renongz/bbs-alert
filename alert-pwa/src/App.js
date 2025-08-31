@@ -1,47 +1,82 @@
-import React, { useEffect, useState } from "react";
-import { messaging, onMessage, getToken } from "./firebase";
+import React, { useEffect, useState, useCallback } from "react";
+import { messaging, onMessage, getToken, deleteToken } from "./firebase";
 import AlertList from "./AlertList";
 import SuspiciousModal from "./SuspiciousModal";
 import PanicModal from "./PanicModal";
 import "./App.css";
 
-const BACKEND_URL = "http://localhost:4000";
-const VAPID_KEY = "BPbskm5kxi_HuNcE2bJN-M02JG2YV2mkZa-vhQv8UM8fK7M066Zj5f4v67mwsIADhonrWVseYwKOtXevSF_-saM";
+const BACKEND_URL = "https://bbs-alert.onrender.com";
+const VAPID_KEY = "BPbskm5kxi_HuNcE2bJN-M02JG2YV2mkZa-vhF_-saM";
 
 function App() {
   const [alerts, setAlerts] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [showPanicModal, setShowPanicModal] = useState(false);
+  const [subscribed, setSubscribed] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
+  const [token, setToken] = useState(null);
 
-  useEffect(() => {
-    if (!("Notification" in window)) return;
-
-    Notification.requestPermission().then((permission) => {
-      if (permission === "granted") {
-        getToken(messaging, { vapidKey: VAPID_KEY }).then((token) => {
-          if (token)
-            fetch(`${BACKEND_URL}/register`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ token, platform: "web" }),
-            });
+  // Fetch alerts from backend
+  const fetchAlerts = useCallback(() => {
+    fetch(`${BACKEND_URL}/alerts`)
+      .then((res) => res.json())
+      .then((data) => {
+        const backendAlerts = (data.items || []).map((item) => {
+          const dateObj = item.createdAt ? new Date(item.createdAt) : new Date();
+          return {
+            title: item.title,
+            body: item.body,
+            date: dateObj.toLocaleDateString(),
+            time: dateObj.toLocaleTimeString(),
+            type: item.type,
+          };
         });
-      }
-    });
 
-    onMessage(messaging, (payload) => {
+        setAlerts((prev) => {
+          const merged = [...backendAlerts, ...prev];
+          const unique = merged.filter(
+            (a, index, self) =>
+              index === self.findIndex(
+                (b) =>
+                  a.title === b.title &&
+                  a.body === b.body &&
+                  a.date === b.date &&
+                  a.time === b.time
+              )
+          );
+          return unique.sort(
+            (a, b) =>
+              new Date(b.date + " " + b.time) - new Date(a.date + " " + a.time)
+          );
+        });
+      })
+      .catch(console.error);
+  }, []);
+
+  // Handle incoming foreground messages
+  const handleIncomingMessage = useCallback(
+    (payload) => {
       const now = new Date();
-      const date = now.toLocaleDateString();
-      const time = now.toLocaleTimeString();
       const type = payload.data?.type || "suspicious";
 
-      const alertData = { title: payload.notification.title, body: payload.notification.body, date, time, type };
+      const alertData = {
+        title: payload.notification.title,
+        body: payload.notification.body,
+        date: now.toLocaleDateString(),
+        time: now.toLocaleTimeString(),
+        type,
+      };
 
+      // Show notification in foreground
       if (Notification.permission === "granted") {
-        new Notification(alertData.title, { body: alertData.body, icon: "/icon-192.png" });
+        new Notification(alertData.title, {
+          body: alertData.body,
+          icon: "/icon-192.png",
+        });
       }
 
-      if (type === "panic") {
+      // Play sound for panic alerts
+      if (type === "panic" && soundOn) {
         const panicAudio = document.getElementById("panic-audio");
         if (panicAudio) {
           panicAudio.currentTime = 0;
@@ -49,6 +84,7 @@ function App() {
         }
       }
 
+      // Add alert to state if not duplicate
       setAlerts((prev) => {
         const exists = prev.some(
           (a) =>
@@ -59,74 +95,97 @@ function App() {
         );
         return exists ? prev : [alertData, ...prev];
       });
+    },
+    [soundOn]
+  );
+
+  // Initialize Firebase messaging and subscribe
+  useEffect(() => {
+    if (!("Notification" in window)) return;
+
+    Notification.requestPermission().then((permission) => {
+      if (permission === "granted") {
+        getToken(messaging, { vapidKey: VAPID_KEY })
+          .then((tok) => {
+            if (tok) {
+              setToken(tok);
+              fetch(`${BACKEND_URL}/register`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token: tok, platform: "web" }),
+              }).then(() => setSubscribed(true));
+            }
+          })
+          .catch(console.error);
+      }
     });
 
+    const unsubscribeMessage = onMessage(messaging, handleIncomingMessage);
     fetchAlerts();
     const interval = setInterval(fetchAlerts, 10000);
-    return () => clearInterval(interval);
-  }, []);
 
-  const fetchAlerts = () => {
-    fetch(`${BACKEND_URL}/alerts`)
-      .then((res) => res.json())
-      .then((data) => {
-        const backendAlerts = (data.items || []).map((item) => {
-          const dateObj = item.createdAt ? new Date(item.createdAt) : new Date();
-          return { title: item.title, body: item.body, date: dateObj.toLocaleDateString(), time: dateObj.toLocaleTimeString(), type: item.type };
-        });
-        setAlerts((prev) => {
-          const merged = [...backendAlerts, ...prev];
-          const unique = merged.filter(
-            (a, index, self) =>
-              index === self.findIndex((b) => a.title === b.title && a.body === b.body && a.date === b.date && a.time === b.time)
-          );
-          return unique.sort((a, b) => new Date(b.date + " " + b.time) - new Date(a.date + " " + a.time));
-        });
-      })
-      .catch(() => {});
+    return () => {
+      clearInterval(interval);
+      unsubscribeMessage(); // Cleanup
+    };
+  }, [fetchAlerts, handleIncomingMessage]);
+
+  // Subscribe / Unsubscribe
+  const handleSubscribe = async () => {
+    if (!token) return;
+    try {
+      await fetch(`${BACKEND_URL}/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, platform: "web" }),
+      });
+      setSubscribed(true);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  // Backend-first Panic alert
-  const handleTriggerPanic = () => {
-    const alertData = {
-      title: "🚨 Panic Alert",
-      body: "🚨 Panic Alert!",
-      type: "panic",
-    };
-
-    const panicAudio = document.getElementById("panic-audio");
-    if (panicAudio) {
-      panicAudio.currentTime = 0;
-      panicAudio.play().catch(() => {});
+  const handleUnsubscribe = async () => {
+    if (!token) return;
+    try {
+      await fetch(`${BACKEND_URL}/unregister`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      await deleteToken(messaging);
+      setSubscribed(false);
+    } catch (err) {
+      console.error(err);
     }
+  };
 
+  // Panic alert
+  const handleTriggerPanic = () => {
+    const alertData = { title: "🚨 Panic Alert", body: "🚨 Panic Alert!", type: "panic" };
+    if (soundOn) {
+      const panicAudio = document.getElementById("panic-audio");
+      if (panicAudio) {
+        panicAudio.currentTime = 0;
+        panicAudio.play().catch(() => {});
+      }
+    }
     fetch(`${BACKEND_URL}/send-alert`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(alertData),
-    })
-      .then(() => fetchAlerts()) // Only update from backend
-      .catch((err) => console.error("Failed to send panic alert:", err));
-
+    }).then(fetchAlerts);
     setShowPanicModal(false);
   };
 
-  // Backend-first Suspicious alert
+  // Suspicious alert
   const sendSuspicious = (message) => {
-    const alertData = {
-      title: "⚠️ Suspicious Alert",
-      body: message,
-      type: "suspicious",
-    };
-
+    const alertData = { title: "⚠️ Suspicious Alert", body: message, type: "suspicious" };
     fetch(`${BACKEND_URL}/send-alert`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(alertData),
-    })
-      .then(() => fetchAlerts()) // Only update from backend
-      .catch((err) => console.error("Failed to send suspicious alert:", err));
-
+    }).then(fetchAlerts);
     setShowModal(false);
   };
 
@@ -138,7 +197,7 @@ function App() {
   return (
     <div className="container">
       <h1 className="title">🚨 Belvedere British School - Emergency Alert System</h1>
-      <audio id="panic-audio" src="/panic.mp3" preload="auto"></audio>
+      <audio id="panic-audio" src="/panic.mp3" preload="auto" />
 
       <div className="button-box">
         <button className="panic" onClick={() => setShowPanicModal(true)}>
@@ -151,11 +210,18 @@ function App() {
           <button className="clear" onClick={clearAlerts}>
             🧹 Clear Alerts
           </button>
+          <button onClick={() => setSoundOn(!soundOn)}>
+            {soundOn ? "🔊 Sound On" : "🔇 Sound Off"}
+          </button>
+          {subscribed ? (
+            <button onClick={handleUnsubscribe}>❌ Unsubscribe</button>
+          ) : (
+            <button onClick={handleSubscribe}>✅ Subscribe</button>
+          )}
         </div>
       </div>
 
       <AlertList alerts={alerts} />
-
       {showModal && <SuspiciousModal onSend={sendSuspicious} onClose={() => setShowModal(false)} />}
       {showPanicModal && <PanicModal onConfirm={handleTriggerPanic} onCancel={() => setShowPanicModal(false)} />}
     </div>

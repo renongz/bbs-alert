@@ -55,6 +55,19 @@ app.post("/register", async (req, res) => {
   }
 });
 
+// Unregister device token (unsubscribe)
+app.post("/unregister", async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: "Missing token" });
+
+    await tokensCol.doc(token).delete();
+    res.json({ success: true, message: "Token unsubscribed successfully" });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Send alert
 app.post("/send-alert", async (req, res) => {
   const { title, body, type } = req.body;

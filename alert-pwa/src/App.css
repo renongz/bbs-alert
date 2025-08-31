@@ -1,7 +1,101 @@
-.container { max-width:900px; margin:0 auto; padding:20px; font-family:Arial, sans-serif; }
-.title { text-align:center; margin-bottom:20px; }
-.button-box { display:flex; justify-content:space-between; flex-wrap:wrap; margin-bottom:20px; }
-.button-box button { padding:10px 15px; margin:2px; font-size:16px; cursor:pointer; border:none; border-radius:5px; }
-.panic { background-color:red; color:white; }
-.suspicious { background-color:orange; color:white; }
-.clear { background-color:gray; color:white; }
+/* Container */
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
+  font-family: Arial, sans-serif;
+}
+
+/* Title */
+.title {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+/* Button group */
+.button-box {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+/* Main buttons */
+.button-box button {
+  padding: 10px 15px;
+  margin: 2px;
+  font-size: 16px;
+  cursor: pointer;
+  border: none;
+  border-radius: 5px;
+  transition: 0.2s;
+}
+
+.button-box button:hover {
+  opacity: 0.9;
+}
+
+/* Panic button */
+.panic {
+  background-color: red;
+  color: white;
+}
+
+/* Suspicious button */
+.suspicious {
+  background-color: orange;
+  color: white;
+}
+
+/* Clear button */
+.clear {
+  background-color: gray;
+  color: white;
+}
+
+/* Subscribe box */
+.subscribe-box {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+/* Subscribe / Unsubscribe buttons */
+.subscribe {
+  background-color: #4caf50;
+  color: white;
+  border-radius: 5px;
+  padding: 10px 15px;
+  cursor: pointer;
+  border: none;
+}
+
+.unsubscribe {
+  background-color: #f44336;
+  color: white;
+  border-radius: 5px;
+  padding: 10px 15px;
+  cursor: pointer;
+  border: none;
+}
+
+/* Sound toggle button */
+.sound-toggle {
+  background-color: #2196f3;
+  color: white;
+  border-radius: 5px;
+  padding: 10px 15px;
+  cursor: pointer;
+  border: none;
+}
+
+/* Alert list spacing */
+.alert-list {
+  margin-top: 20px;
+}
+
+/* Small buttons wrapper */
+.small-buttons {
+  display: flex;
+  gap: 5px;
+}

@@ -1,3 +1,4 @@
+// public/firebase-messaging-sw.js
 importScripts('https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/9.22.2/firebase-messaging-compat.js');
 
@@ -13,16 +14,18 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
+// Handle background notifications
 messaging.onBackgroundMessage((payload) => {
-  const notificationTitle = payload.notification?.title || "New Alert";
-  const notificationOptions = {
+  const title = payload.notification?.title || "New Alert";
+  const options = {
     body: payload.notification?.body || "",
     icon: "/icon-192.png",
-    data: payload.data || {},
+    data: payload.data || {}
   };
-  self.registration.showNotification(notificationTitle, notificationOptions);
+  self.registration.showNotification(title, options);
 });
 
+// Notification click
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   event.waitUntil(
