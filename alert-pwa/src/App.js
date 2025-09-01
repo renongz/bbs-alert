@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { messaging, onMessage, getToken, deleteToken } from "./firebase";
+import { messaging, getToken, onMessage, deleteToken } from "./firebase";
 import AlertList from "./AlertList";
 import SuspiciousModal from "./SuspiciousModal";
 import PanicModal from "./PanicModal";
@@ -67,7 +67,7 @@ function App() {
         type,
       };
 
-      // Show notification in foreground
+      // Show system notification in foreground
       if (Notification.permission === "granted") {
         new Notification(alertData.title, {
           body: alertData.body,
@@ -77,11 +77,10 @@ function App() {
 
       // Play sound for panic alerts
       if (type === "panic" && soundOn) {
-        const panicAudio = document.getElementById("panic-audio");
-        panicAudio?.play().catch(() => {});
+        document.getElementById("panic-audio")?.play().catch(() => {});
       }
 
-      // Add alert to state if not duplicate
+      // Add alert to state
       setAlerts((prev) => {
         const exists = prev.some(
           (a) =>
@@ -96,7 +95,7 @@ function App() {
     [soundOn]
   );
 
-  // Initialize Firebase messaging and subscribe
+  // Initialize Firebase messaging
   useEffect(() => {
     if (!("Notification" in window)) return;
 
@@ -121,26 +120,22 @@ function App() {
     fetchAlerts();
     const interval = setInterval(fetchAlerts, 10000);
 
-    // Handle service worker messages for background notifications
+    // Handle service worker messages (background)
     if (navigator.serviceWorker) {
       navigator.serviceWorker.addEventListener("message", (event) => {
         const data = event.data?.firebaseMessaging;
         if (!data) return;
-
-        const { title, body, type } = data;
-
         const now = new Date();
         const alertData = {
-          title: title || "New Alert",
-          body: body || "",
+          title: data.title || "New Alert",
+          body: data.body || "",
           date: now.toLocaleDateString(),
           time: now.toLocaleTimeString(),
-          type: type || "suspicious",
+          type: data.type || "suspicious",
         };
 
         if (alertData.type === "panic" && soundOn) {
-          const panicAudio = document.getElementById("panic-audio");
-          panicAudio?.play().catch(() => {});
+          document.getElementById("panic-audio")?.play().catch(() => {});
         }
 
         setAlerts((prev) => [alertData, ...prev]);
@@ -156,48 +151,38 @@ function App() {
   // Subscribe / Unsubscribe
   const handleSubscribe = async () => {
     if (!token) return;
-    try {
-      await fetch(`${BACKEND_URL}/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, platform: "web" }),
-      });
-      setSubscribed(true);
-    } catch (err) {
-      console.error(err);
-    }
+    await fetch(`${BACKEND_URL}/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, platform: "web" }),
+    });
+    setSubscribed(true);
   };
 
   const handleUnsubscribe = async () => {
     if (!token) return;
-    try {
-      await fetch(`${BACKEND_URL}/unregister`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
-      await deleteToken(messaging);
-      setSubscribed(false);
-    } catch (err) {
-      console.error(err);
-    }
+    await fetch(`${BACKEND_URL}/unregister`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    await deleteToken(messaging);
+    setSubscribed(false);
   };
 
-  // Panic alert
+  // Trigger Panic Alert
   const handleTriggerPanic = () => {
     const alertData = { title: "🚨 Panic Alert", body: "🚨 Panic Alert!", type: "panic" };
     if (soundOn) document.getElementById("panic-audio")?.play();
-
     fetch(`${BACKEND_URL}/send-alert`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(alertData),
     }).then(fetchAlerts);
-
     setShowPanicModal(false);
   };
 
-  // Suspicious alert
+  // Trigger Suspicious Alert
   const sendSuspicious = (message) => {
     const alertData = { title: "⚠️ Suspicious Alert", body: message, type: "suspicious" };
     fetch(`${BACKEND_URL}/send-alert`, {
@@ -208,6 +193,7 @@ function App() {
     setShowModal(false);
   };
 
+  // Clear alerts
   const clearAlerts = () => {
     setAlerts([]);
     fetch(`${BACKEND_URL}/clear-alerts`, { method: "DELETE" });

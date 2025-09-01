@@ -18,15 +18,30 @@ const firebaseConfig = {
   measurementId: "G-3E21ZRM641",
 };
 
-// Initialize Firebase
+// Initialize Firebase app
 const app = initializeApp(firebaseConfig);
 
-// Initialize Messaging
+// Initialize Firebase Cloud Messaging
 const messaging = getMessaging(app);
 
-export {
-  messaging,
-  getTokenCompat as getToken,      // For subscribing
-  onMessageCompat as onMessage,    // For receiving foreground messages
-  deleteTokenCompat as deleteToken // For unsubscribing
-};
+/**
+ * Subscribe to notifications
+ * @param {string} vapidKey - VAPID key from Firebase console
+ * @returns {Promise<string>} - FCM token
+ */
+const getToken = (vapidKey) => getTokenCompat(messaging, { vapidKey });
+
+/**
+ * Listen to foreground messages
+ * @param {function} callback - function(payload)
+ * @returns {function} unsubscribe
+ */
+const onMessage = (callback) => onMessageCompat(messaging, callback);
+
+/**
+ * Unsubscribe / delete token
+ * @returns {Promise<void>}
+ */
+const deleteToken = () => deleteTokenCompat(messaging);
+
+export { messaging, getToken, onMessage, deleteToken };
