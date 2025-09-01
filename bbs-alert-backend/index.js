@@ -2,115 +2,168 @@ const express = require("express");
 const cors = require("cors");
 const admin = require("firebase-admin");
 
-// ============================
-// 🔹 Load Firebase credentials
-// ============================
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Load Firebase service account (Render ENV or local file)
 let serviceAccount;
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 } else {
-  serviceAccount = require("./serviceAccountKey.json"); // for local dev
+  serviceAccount = require("./serviceAccountKey.json");
 }
 
-// Force correct projectId (fixes 404 /batch issue)
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  projectId: serviceAccount.project_id,
 });
 
 const db = admin.firestore();
 const tokensCol = db.collection("fcmTokens");
 const alertsCol = db.collection("alerts");
 
-// ============================
-// 🔹 Express setup
-// ============================
-const app = express();
-app.use(cors());
-app.use(express.json());
+// Helper: split array into chunks
+const chunk = (arr, size) => {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+};
 
-// ============================
-// 🔹 Save FCM token
-// ============================
-app.post("/register-token", async (req, res) => {
+// Health check
+app.get("/", (_req, res) => res.send("✅ Backend running"));
+
+// Register device token
+app.post("/register", async (req, res) => {
   try {
-    const { token } = req.body;
-    if (!token) return res.status(400).json({ error: "No token provided" });
+    const { token, platform } = req.body;
+    if (!token) return res.status(400).json({ error: "Missing token" });
 
-    await tokensCol.doc(token).set({ token, createdAt: Date.now() });
-    console.log("✅ Token saved:", token);
+    await tokensCol.doc(token).set(
+      {
+        token,
+        platform: platform || "web",
+        lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    console.log("📌 Token registered:", token);
     res.json({ success: true });
   } catch (err) {
-    console.error("❌ Error saving token:", err);
-    res.status(500).json({ error: "Failed to save token" });
+    console.error("🔥 Register error:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ============================
-// 🔹 Send alert to all devices
-// ============================
-app.post("/send-alert", async (req, res) => {
+// Unregister token
+app.post("/unregister", async (req, res) => {
   try {
-    const { title, body } = req.body;
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: "Missing token" });
 
-    // Save alert to Firestore
-    await alertsCol.add({
+    await tokensCol.doc(token).delete();
+    console.log("🗑️ Token unregistered:", token);
+    res.json({ success: true, message: "Token unsubscribed successfully" });
+  } catch (err) {
+    console.error("🔥 Unregister error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Send alert
+app.post("/send-alert", async (req, res) => {
+  const { title, body, type } = req.body;
+  if (!title || !body || !type)
+    return res.status(400).json({ error: "Missing title/body/type" });
+
+  try {
+    // Save alert
+    const alertDoc = {
       title,
       body,
-      createdAt: Date.now(),
-    });
+      type,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    await alertsCol.add(alertDoc);
 
     // Get all tokens
-    const snapshot = await tokensCol.get();
-    const tokens = snapshot.docs.map((doc) => doc.id);
+    const snap = await tokensCol.get();
+    const tokens = snap.docs.map((d) => d.id);
 
-    if (tokens.length === 0) {
-      console.log("⚠️ No tokens found");
-      return res.json({ success: false, message: "No tokens registered" });
+    if (!tokens.length) {
+      console.log("⚠️ No tokens in Firestore. Skipping send.");
+      return res.json({ success: false, message: "No tokens available" });
     }
-
-    // Send push notification
-    const message = {
-      notification: { title, body },
-      tokens: tokens,
-    };
 
     console.log(`📢 Sending alert to ${tokens.length} devices...`);
 
-    const response = await admin.messaging().sendMulticast(message);
+    // Send in chunks
+    for (const group of chunk(tokens, 500)) {
+      const response = await admin.messaging().sendMulticast({
+        tokens: group,
+        notification: { title, body },
+        data: { type },
+      });
 
-    // Handle invalid tokens
-    const invalidTokens = [];
-    response.responses.forEach((resp, idx) => {
-      if (!resp.success) {
-        invalidTokens.push(tokens[idx]);
-      }
-    });
+      console.log(
+        `📨 Sent to ${group.length} tokens → ✅ ${response.successCount} | ❌ ${response.failureCount}`
+      );
 
-    // Remove invalid tokens from Firestore
-    if (invalidTokens.length > 0) {
-      console.log("🗑 Removing invalid tokens:", invalidTokens);
-      for (const t of invalidTokens) {
-        await tokensCol.doc(t).delete();
-      }
+      response.responses.forEach((r, i) => {
+        if (!r.success) {
+          console.error("❌ Failed token:", group[i], r.error?.message);
+        }
+      });
     }
 
-    res.json({
-      success: true,
-      sent: response.successCount,
-      failed: response.failureCount,
-    });
+    res.json({ success: true });
   } catch (err) {
     console.error("🔥 Send-alert error:", err);
-    res.status(500).json({ error: "Failed to send alert" });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ============================
-// 🔹 Start server
-// ============================
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🚀 Backend running on http://localhost:${PORT}`);
-  console.log(`🔥 Using Firebase project: ${admin.app().options.projectId}`);
+// Fetch last 50 alerts
+app.get("/alerts", async (_req, res) => {
+  try {
+    const snap = await alertsCol.orderBy("createdAt", "desc").limit(50).get();
+    res.json({
+      items: snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          title: data.title,
+          body: data.body,
+          type: data.type,
+          createdAt: data.createdAt?.toDate().toISOString() || null,
+        };
+      }),
+    });
+  } catch (err) {
+    console.error("🔥 Fetch alerts error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
+
+// Clear alerts
+app.delete("/clear-alerts", async (_req, res) => {
+  try {
+    const snap = await alertsCol.get();
+    const batch = db.batch();
+    snap.docs.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+
+    console.log("🧹 All alerts cleared");
+    res.json({ success: true, message: "All alerts cleared" });
+  } catch (err) {
+    console.error("🔥 Clear alerts error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Start server
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () =>
+  console.log(`🚀 Backend running on http://localhost:${PORT}`)
+);
