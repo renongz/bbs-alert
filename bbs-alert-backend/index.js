@@ -6,25 +6,24 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Load Firebase service account (Render ENV or local file)
+// Load Firebase service account from environment variable (Render)
 let serviceAccount;
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 } else {
+  // Fallback for local development
   serviceAccount = require("./serviceAccountKey.json");
 }
 
-// Initialize Firebase Realtime Database
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  databaseURL: "https://bbs-alert-default-rtdb.firebaseio.com" // <-- Replace with your RTDB URL
 });
 
-const db = admin.database();
-const tokensRef = db.ref("fcmTokens");
-const alertsRef = db.ref("alerts");
+const db = admin.firestore();
+const tokensCol = db.collection("fcmTokens");
+const alertsCol = db.collection("alerts");
 
-// Helper: split array into chunks
+// Helper to split tokens into chunks for FCM
 const chunk = (arr, size) => {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
@@ -40,79 +39,63 @@ app.post("/register", async (req, res) => {
     const { token, platform } = req.body;
     if (!token) return res.status(400).json({ error: "Missing token" });
 
-    await tokensRef.child(token).set({
-      token,
-      platform: platform || "web",
-      lastSeenAt: Date.now(),
-      createdAt: Date.now(),
-    });
+    await tokensCol.doc(token).set(
+      {
+        token,
+        platform: platform || "web",
+        lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
 
-    console.log("📌 Token registered:", token);
     res.json({ success: true });
   } catch (err) {
-    console.error("🔥 Register error:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Unregister device token
+// Unregister device token (unsubscribe)
 app.post("/unregister", async (req, res) => {
   try {
     const { token } = req.body;
     if (!token) return res.status(400).json({ error: "Missing token" });
 
-    await tokensRef.child(token).remove();
-    console.log("🗑️ Token unregistered:", token);
+    await tokensCol.doc(token).delete();
     res.json({ success: true, message: "Token unsubscribed successfully" });
   } catch (err) {
-    console.error("🔥 Unregister error:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Send alert to devices
+// Send alert
 app.post("/send-alert", async (req, res) => {
   const { title, body, type } = req.body;
   if (!title || !body || !type)
     return res.status(400).json({ error: "Missing title/body/type" });
 
   try {
-    // Save alert to Realtime Database
-    const alertData = { title, body, type, createdAt: Date.now() };
-    const newAlertRef = alertsRef.push();
-    await newAlertRef.set(alertData);
+    const alertDoc = {
+      title,
+      body,
+      type,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    await alertsCol.add(alertDoc);
 
-    // Get all tokens
-    const tokensSnap = await tokensRef.once("value");
-    const tokensObj = tokensSnap.val() || {};
-    const tokens = Object.keys(tokensObj);
+    const snap = await tokensCol.get();
+    const tokens = snap.docs.map((d) => d.id);
 
-    if (!tokens.length) {
-      console.log("⚠️ No tokens in database. Skipping send.");
-      return res.json({ success: false, message: "No tokens available" });
-    }
-
-    console.log(`📢 Sending alert to ${tokens.length} devices...`);
-
-    // Send in chunks of 500
     for (const group of chunk(tokens, 500)) {
-      const response = await admin.messaging().sendMulticast({
+      await admin.messaging().sendMulticast({
         tokens: group,
         notification: { title, body },
         data: { type },
-      });
-
-      console.log(`📨 Sent: ✅ ${response.successCount} | ❌ ${response.failureCount}`);
-      response.responses.forEach((r, i) => {
-        if (!r.success) {
-          console.error("❌ Failed token:", group[i], r.error?.message);
-        }
       });
     }
 
     res.json({ success: true });
   } catch (err) {
-    console.error("🔥 Send-alert error:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -120,20 +103,20 @@ app.post("/send-alert", async (req, res) => {
 // Fetch last 50 alerts
 app.get("/alerts", async (_req, res) => {
   try {
-    const snap = await alertsRef.orderByChild("createdAt").limitToLast(50).once("value");
-    const alertsObj = snap.val() || {};
-    const alerts = Object.values(alertsObj)
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .map(a => ({
-        title: a.title,
-        body: a.body,
-        date: new Date(a.createdAt).toLocaleDateString(),
-        time: new Date(a.createdAt).toLocaleTimeString(),
-        type: a.type,
-      }));
-    res.json({ items: alerts });
+    const snap = await alertsCol.orderBy("createdAt", "desc").limit(50).get();
+    res.json({
+      items: snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          title: data.title,
+          body: data.body,
+          type: data.type,
+          createdAt: data.createdAt?.toDate().toISOString() || null,
+        };
+      }),
+    });
   } catch (err) {
-    console.error("🔥 Fetch alerts error:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -141,15 +124,18 @@ app.get("/alerts", async (_req, res) => {
 // Clear all alerts
 app.delete("/clear-alerts", async (_req, res) => {
   try {
-    await alertsRef.remove();
-    console.log("🧹 All alerts cleared");
+    const snap = await alertsCol.get();
+    const batch = db.batch();
+    snap.docs.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+
     res.json({ success: true, message: "All alerts cleared" });
   } catch (err) {
-    console.error("🔥 Clear alerts error:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Start server
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`🚀 Backend running on http://localhost:${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🚀 Backend running on http://localhost:${PORT}`)
+);
