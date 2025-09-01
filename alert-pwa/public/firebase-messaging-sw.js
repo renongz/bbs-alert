@@ -1,7 +1,8 @@
-// public/firebase-messaging-sw.js
+// firebase-messaging-sw.js
 importScripts('https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/9.22.2/firebase-messaging-compat.js');
 
+// Initialize Firebase
 firebase.initializeApp({
   apiKey: "AIzaSyAbohcONTb1FGRjPiVxWblTc-esImwEcI8",
   authDomain: "bbs-alert.firebaseapp.com",
@@ -14,24 +15,43 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// Handle background notifications
+// Background message handler
 messaging.onBackgroundMessage((payload) => {
-  const title = payload.notification?.title || "New Alert";
-  const options = {
+  console.log('[firebase-messaging-sw.js] Received background message', payload);
+
+  const notificationTitle = payload.notification?.title || "New Alert";
+  const notificationOptions = {
     body: payload.notification?.body || "",
     icon: "/icon-192.png",
-    data: payload.data || {}
+    data: payload.data || {}, // Pass type (panic/suspicious) in data
   };
-  self.registration.showNotification(title, options);
+
+  // Show system notification
+  self.registration.showNotification(notificationTitle, notificationOptions);
+
+  // Notify React app if it’s open
+  self.clients.matchAll({ includeUncontrolled: true, type: "window" }).then((clients) => {
+    clients.forEach((client) => {
+      client.postMessage({
+        firebaseMessaging: {
+          title: notificationTitle,
+          body: notificationOptions.body,
+          type: payload.data?.type || "suspicious",
+        }
+      });
+    });
+  });
 });
 
-// Notification click
+// Handle notification click
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-      if (clientList.length > 0) return clientList[0].focus();
-      return clients.openWindow("/");
+      if (clientList.length > 0) {
+        return clientList[0].focus();
+      }
+      return clients.openWindow("/"); // Open app if no window
     })
   );
 });

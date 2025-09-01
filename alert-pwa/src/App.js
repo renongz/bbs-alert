@@ -78,10 +78,7 @@ function App() {
       // Play sound for panic alerts
       if (type === "panic" && soundOn) {
         const panicAudio = document.getElementById("panic-audio");
-        if (panicAudio) {
-          panicAudio.currentTime = 0;
-          panicAudio.play().catch(() => {});
-        }
+        panicAudio?.play().catch(() => {});
       }
 
       // Add alert to state if not duplicate
@@ -124,11 +121,37 @@ function App() {
     fetchAlerts();
     const interval = setInterval(fetchAlerts, 10000);
 
+    // Handle service worker messages for background notifications
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker.addEventListener("message", (event) => {
+        const data = event.data?.firebaseMessaging;
+        if (!data) return;
+
+        const { title, body, type } = data;
+
+        const now = new Date();
+        const alertData = {
+          title: title || "New Alert",
+          body: body || "",
+          date: now.toLocaleDateString(),
+          time: now.toLocaleTimeString(),
+          type: type || "suspicious",
+        };
+
+        if (alertData.type === "panic" && soundOn) {
+          const panicAudio = document.getElementById("panic-audio");
+          panicAudio?.play().catch(() => {});
+        }
+
+        setAlerts((prev) => [alertData, ...prev]);
+      });
+    }
+
     return () => {
       clearInterval(interval);
-      unsubscribeMessage(); // Cleanup
+      unsubscribeMessage();
     };
-  }, [fetchAlerts, handleIncomingMessage]);
+  }, [fetchAlerts, handleIncomingMessage, soundOn]);
 
   // Subscribe / Unsubscribe
   const handleSubscribe = async () => {
@@ -163,18 +186,14 @@ function App() {
   // Panic alert
   const handleTriggerPanic = () => {
     const alertData = { title: "🚨 Panic Alert", body: "🚨 Panic Alert!", type: "panic" };
-    if (soundOn) {
-      const panicAudio = document.getElementById("panic-audio");
-      if (panicAudio) {
-        panicAudio.currentTime = 0;
-        panicAudio.play().catch(() => {});
-      }
-    }
+    if (soundOn) document.getElementById("panic-audio")?.play();
+
     fetch(`${BACKEND_URL}/send-alert`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(alertData),
     }).then(fetchAlerts);
+
     setShowPanicModal(false);
   };
 
